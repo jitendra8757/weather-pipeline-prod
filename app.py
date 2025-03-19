@@ -694,29 +694,85 @@ def export_data():
     try:
         db = get_db()
         cursor = db.cursor()
+        data = {'export_date': datetime.now().isoformat()}
         
         # Get saved locations
-        cursor.execute('SELECT * FROM saved_locations')
-        locations = cursor.fetchall()
+        try:
+            cursor.execute('SELECT * FROM saved_locations')
+            data['saved_locations'] = cursor.fetchall()
+            logger.info(f"Found {len(data['saved_locations'])} saved locations")
+        except sqlite3.OperationalError as e:
+            logger.error(f"Error fetching saved_locations: {str(e)}")
+            data['saved_locations'] = []
         
-        # Get weather challenges
-        cursor.execute('SELECT * FROM weather_challenges')
-        challenges = cursor.fetchall()
+        # Get weather challenges if table exists
+        try:
+            cursor.execute('SELECT * FROM weather_challenges')
+            data['weather_challenges'] = cursor.fetchall()
+            logger.info(f"Found {len(data['weather_challenges'])} challenges")
+        except sqlite3.OperationalError:
+            logger.info("weather_challenges table not found")
+            data['weather_challenges'] = []
         
-        # Get user progress
-        cursor.execute('SELECT * FROM user_progress')
-        progress = cursor.fetchall()
-        
-        data = {
-            'saved_locations': locations,
-            'weather_challenges': challenges,
-            'user_progress': progress,
-            'export_date': datetime.now().isoformat()
-        }
+        # Get user progress if table exists
+        try:
+            cursor.execute('SELECT * FROM user_progress')
+            data['user_progress'] = cursor.fetchall()
+            logger.info(f"Found {len(data['user_progress'])} progress records")
+        except sqlite3.OperationalError:
+            logger.info("user_progress table not found")
+            data['user_progress'] = []
         
         return jsonify(data)
     except Exception as e:
         logger.error(f"Error exporting data: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+# Add temporary init endpoint
+@app.route('/init-db', methods=['GET'])
+def init_db_endpoint():
+    """Temporary endpoint to initialize database"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # Create tables
+        cursor.executescript('''
+            CREATE TABLE IF NOT EXISTS saved_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                country TEXT,
+                state TEXT,
+                is_current BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS user_progress (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                challenge_id TEXT NOT NULL,
+                completed BOOLEAN DEFAULT 0,
+                score INTEGER DEFAULT 0,
+                completed_at TIMESTAMP DEFAULT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS weather_challenges (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                difficulty TEXT CHECK(difficulty IN ('Easy', 'Medium', 'Hard')) NOT NULL,
+                points INTEGER DEFAULT 100,
+                category TEXT NOT NULL,
+                requirements TEXT NOT NULL,
+                track TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        db.commit()
+        return jsonify({'message': 'Database initialized successfully'})
+    except Exception as e:
+        logger.error(f"Error initializing database: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
