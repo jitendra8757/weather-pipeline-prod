@@ -9,3 +9,7 @@ services:
         value: 3.13.0
       - key: OPENWEATHER_API_KEY
         sync: false
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
