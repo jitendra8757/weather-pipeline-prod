@@ -496,32 +496,29 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 1.2rem;
-            border-radius: 20px;
-            margin-bottom: 1rem;
-            background: rgba(255, 255, 255, 0.5);
-            border: var(--glass-border);
-            backdrop-filter: blur(5px);
+            padding: 15px;
+            margin: 10px 0;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
             cursor: pointer;
-        }
-
-        .location-item:last-child {
-            margin-bottom: 0;
         }
 
         .location-item:hover {
             background: var(--gradient);
-            color: white;
-            transform: translateX(5px);
+            transform: translateY(-2px);
+            box-shadow: var(--hover-shadow);
         }
 
         .location-item.current {
-            background: var(--gradient);
-            color: white;
+            border: 2px solid var(--accent-color);
+            background: rgba(255, 255, 255, 0.15);
         }
 
-        .location-item i {
-            font-size: 1.2rem;
+        .location-info {
+            flex-grow: 1;
+            padding-right: 15px;
         }
 
         .location-actions {
@@ -530,32 +527,57 @@
         }
 
         .delete-btn {
-            padding: 8px;
-            background: #dc3545;
-            color: white;
-            border-radius: 50%;
-            width: 35px;
-            height: 35px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.3s ease;
+            background: none;
+            border: none;
+            color: #ef4444;
+            padding: 5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            opacity: 0.7;
         }
 
         .delete-btn:hover {
-            background: #c82333;
-            transform: rotate(90deg);
+            opacity: 1;
+            transform: scale(1.1);
+        }
+
+        .no-locations {
+            text-align: center;
+            padding: 20px;
+            color: rgba(255, 255, 255, 0.7);
+            font-style: italic;
         }
 
         .error-message {
-            color: #dc3545;
             text-align: center;
-            margin: 1.5rem 0;
-            padding: 1.2rem;
-            border-radius: 20px;
-            background: rgba(255, 220, 220, 0.9);
-            border: 1px solid #dc3545;
-            backdrop-filter: blur(10px);
+            padding: 20px;
+            color: #ef4444;
+            font-weight: 500;
+        }
+
+        #savedLocations {
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            padding-right: 10px;
+        }
+
+        #savedLocations::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        #savedLocations::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        #savedLocations::-webkit-scrollbar-thumb {
+            background: var(--primary-color);
+            border-radius: 4px;
+        }
+
+        #savedLocations::-webkit-scrollbar-thumb:hover {
+            background: var(--accent-color);
         }
 
         .loading {
@@ -890,24 +912,29 @@
                 showLoading();
                 console.log('Saving location:', location);
                 
+                // Convert coordinates to numbers
+                const locationData = {
+                    name: location.name,
+                    lat: parseFloat(location.lat),
+                    lon: parseFloat(location.lon),
+                    country: location.country || null,
+                    state: location.state || null,
+                    is_current: Boolean(isCurrentLocation)
+                };
+                
                 // Validate location data
-                if (!location || !location.name || !location.lat || !location.lon) {
+                if (!locationData.name || isNaN(locationData.lat) || isNaN(locationData.lon)) {
                     throw new Error('Invalid location data');
                 }
+                
+                console.log('Sending location data:', locationData);
                 
                 const response = await fetch('/locations/save', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({
-                        name: location.name,
-                        lat: location.lat,
-                        lon: location.lon,
-                        country: location.country || null,
-                        state: location.state || null,
-                        is_current: isCurrentLocation || false
-                    })
+                    body: JSON.stringify(locationData)
                 });
 
                 const data = await response.json();
@@ -919,23 +946,118 @@
 
                 // Show success message
                 const message = document.getElementById('message');
-                message.textContent = data.message || 'Location saved successfully';
-                message.className = 'message success';
-                setTimeout(() => {
-                    message.textContent = '';
-                    message.className = 'message';
-                }, 3000);
+                if (message) {
+                    message.textContent = data.message || 'Location saved successfully';
+                    message.className = 'message success';
+                    setTimeout(() => {
+                        message.textContent = '';
+                        message.className = 'message';
+                    }, 3000);
+                }
 
                 await loadSavedLocations();
             } catch (error) {
                 console.error('Save error:', error);
                 const message = document.getElementById('message');
-                message.textContent = error.message;
-                message.className = 'message error';
-                setTimeout(() => {
-                    message.textContent = '';
-                    message.className = 'message';
-                }, 3000);
+                if (message) {
+                    message.textContent = error.message;
+                    message.className = 'message error';
+                    setTimeout(() => {
+                        message.textContent = '';
+                        message.className = 'message';
+                    }, 3000);
+                }
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function loadSavedLocations() {
+            try {
+                const response = await fetch('/locations/saved');
+                if (!response.ok) {
+                    throw new Error('Failed to load saved locations');
+                }
+                
+                const locations = await response.json();
+                console.log('Loaded locations:', locations);
+
+                const container = document.getElementById('savedLocations');
+                if (!container) {
+                    console.error('Saved locations container not found');
+                    return;
+                }
+
+                if (!Array.isArray(locations) || locations.length === 0) {
+                    container.innerHTML = '<p class="no-locations">No saved locations</p>';
+                    return;
+                }
+
+                container.innerHTML = locations.map(location => `
+                    <div class="location-item ${location.is_current ? 'current' : ''}" 
+                         onclick="fetchWeatherData(null, ${location.lat}, ${location.lon})">
+                        <div class="location-info">
+                            <strong>${location.name}</strong>
+                            ${location.state ? `, ${location.state}` : ''}
+                            ${location.country ? `, ${location.country}` : ''}
+                            ${location.is_current ? ' (Current Location)' : ''}
+                        </div>
+                        <div class="location-actions">
+                            <button onclick="event.stopPropagation(); deleteLocation(${location.id})" 
+                                    class="delete-btn" 
+                                    title="Delete location">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Error loading locations:', error);
+                const container = document.getElementById('savedLocations');
+                if (container) {
+                    container.innerHTML = '<p class="error-message">Failed to load saved locations</p>';
+                }
+            }
+        }
+
+        async function deleteLocation(locationId) {
+            if (!confirm('Are you sure you want to delete this location?')) {
+                return;
+            }
+            
+            try {
+                showLoading();
+                const response = await fetch(`/locations/delete/${locationId}`, {
+                    method: 'DELETE'
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete location');
+                }
+
+                const message = document.getElementById('message');
+                if (message) {
+                    message.textContent = 'Location deleted successfully';
+                    message.className = 'message success';
+                    setTimeout(() => {
+                        message.textContent = '';
+                        message.className = 'message';
+                    }, 3000);
+                }
+
+                await loadSavedLocations();
+            } catch (error) {
+                console.error('Delete error:', error);
+                const message = document.getElementById('message');
+                if (message) {
+                    message.textContent = error.message;
+                    message.className = 'message error';
+                    setTimeout(() => {
+                        message.textContent = '';
+                        message.className = 'message';
+                    }, 3000);
+                }
             } finally {
                 hideLoading();
             }
@@ -1103,7 +1225,8 @@
                 });
 
                 if (!response.ok) {
-                    throw new Error('Failed to delete location');
+                    const data = await response.json();
+                    throw new Error(data.error || 'Failed to delete location');
                 }
 
                 loadSavedLocations();

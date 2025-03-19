@@ -4,142 +4,134 @@ from dotenv import load_dotenv
 import os
 import logging
 import sqlite3
-from datetime import datetime
 import traceback
-
-app = Flask(__name__)
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
+
+app = Flask(__name__)
+
+# API configuration
 API_KEY = 'c3cd0b3e22e4080082a35b80adbe8f1f'
 
 # Database configuration
-if 'RENDER' in os.environ:
-    DATABASE = '/data/weather_app.db'
-else:
-    DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weather_app.db')
+DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'database', 'weather.db')
+
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+logger.info(f"Database path: {DATABASE}")
+
+def dict_factory(cursor, row):
+    """Convert database row objects to a dictionary"""
+    return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
+
+def get_db():
+    """Get database connection with row factory"""
+    if 'db' not in g:
+        try:
+            # Ensure the database directory exists
+            ensure_db_directory()
+            
+            g.db = sqlite3.connect(
+                DATABASE,
+                detect_types=sqlite3.PARSE_DECLTYPES
+            )
+            # Use dict_factory for JSON serialization
+            g.db.row_factory = dict_factory
+            logger.debug("Database connection established")
+        except sqlite3.Error as e:
+            logger.error(f"Database connection error: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error getting database connection: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+    return g.db
+
+def close_db(e=None):
+    """Close the database connection"""
+    db = g.pop('db', None)
+    if db is not None:
+        db.close()
+
+def ensure_db_directory():
+    """Ensure database directory exists and is writable"""
+    try:
+        logger.info(f"Checking database directory: {os.path.dirname(DATABASE)}")
+        
+        # Create database directory if it doesn't exist
+        os.makedirs(os.path.dirname(DATABASE), exist_ok=True)
+        
+        # Test if directory is writable by creating a temp file
+        test_file = os.path.join(os.path.dirname(DATABASE), '.write_test')
+        try:
+            with open(test_file, 'w') as f:
+                f.write('test')
+            os.remove(test_file)
+            logger.info("Database directory is writable")
+        except (IOError, OSError) as e:
+            logger.error(f"Database directory is not writable: {str(e)}")
+            raise
+            
+    except Exception as e:
+        logger.error(f"Failed to ensure database directory: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
+def init_db():
+    """Initialize the database schema"""
+    try:
+        logger.info("Initializing database")
+        db = get_db()
+        cursor = db.cursor()
+
+        # Create saved_locations table if it doesn't exist
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                country TEXT,
+                state TEXT,
+                is_current BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        db.commit()
+        logger.info("Database initialized successfully")
+    except sqlite3.Error as e:
+        logger.error(f"Database initialization error: {str(e)}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during database initialization: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
+
+def initialize_database():
+    """Ensure database exists and is initialized before first request"""
+    try:
+        ensure_db_directory()
+        init_db()
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {str(e)}")
+        raise
+
+# Initialize database on startup
+with app.app_context():
+    initialize_database()
+
+# Register database connection close handler
+app.teardown_appcontext(close_db)
 
 # API endpoints
 GEOCODING_BASE_URL = "http://api.openweathermap.org/geo/1.0/direct"
 REVERSE_GEOCODING_URL = "http://api.openweathermap.org/geo/1.0/reverse"
 WEATHER_BASE_URL = "http://api.openweathermap.org/data/2.5/weather"
 AIR_POLLUTION_BASE_URL = "http://api.openweathermap.org/data/2.5/air_pollution"
-
-# Configure logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
-def dict_factory(cursor, row):
-    fields = [column[0] for column in cursor.description]
-    return {key: value for key, value in zip(fields, row)}
-
-def get_db():
-    if 'db' not in g:
-        g.db = sqlite3.connect(DATABASE)
-        g.db.row_factory = dict_factory
-    return g.db
-
-def close_db(e=None):
-    db = g.pop('db', None)
-    if db is not None:
-        db.close()
-
-def init_db():
-    try:
-        # Create data directory if on Render
-        if 'RENDER' in os.environ:
-            os.makedirs('/data', exist_ok=True)
-            
-        logger.debug(f"Initializing database at {DATABASE}")
-        with app.app_context():
-            db = get_db()
-            with app.open_resource('schema.sql', mode='r') as f:
-                script = f.read()
-                logger.debug(f"Executing SQL script: {script}")
-                db.executescript(script)
-            db.commit()
-            logger.debug("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Error initializing database: {str(e)}")
-        logger.error(traceback.format_exc())
-        raise
-
-def init_challenges():
-    db = get_db()
-    challenges = [
-        {
-            'title': 'Weather Novice',
-            'description': 'Get started with basic weather tracking',
-            'difficulty': 'Easy',
-            'category': 'Basics',
-            'points': 100,
-            'requirements': 'Complete first weather search',
-            'track': 'Getting Started'
-        },
-        {
-            'title': 'City Explorer',
-            'description': 'Search weather in 3 different cities',
-            'difficulty': 'Easy',
-            'category': 'Search',
-            'points': 200,
-            'requirements': '3 unique cities',
-            'track': 'Getting Started'
-        },
-        {
-            'title': 'Weather Patterns',
-            'description': 'Find cities with 3 different weather conditions',
-            'difficulty': 'Medium',
-            'category': 'Weather',
-            'points': 300,
-            'requirements': '3 unique conditions',
-            'track': 'Weather Expert'
-        },
-        {
-            'title': 'Global Navigator',
-            'description': 'Check weather in 3 different continents',
-            'difficulty': 'Medium',
-            'category': 'Geography',
-            'points': 400,
-            'requirements': '3 continents',
-            'track': 'Weather Expert'
-        },
-        {
-            'title': 'Weather Master',
-            'description': 'Complete all challenges in the Weather Expert track',
-            'difficulty': 'Hard',
-            'category': 'Achievement',
-            'points': 500,
-            'requirements': 'All previous challenges',
-            'track': 'Weather Expert'
-        }
-    ]
-    
-    for challenge in challenges:
-        db.execute('''
-            INSERT OR IGNORE INTO weather_challenges 
-            (title, description, difficulty, category, points, requirements, track)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            challenge['title'],
-            challenge['description'],
-            challenge['difficulty'],
-            challenge['category'],
-            challenge['points'],
-            challenge['requirements'],
-            challenge['track']
-        ))
-    db.commit()
-
-@app.teardown_appcontext
-def teardown_db(exception):
-    close_db()
-
-# Initialize database on app startup
-@app.before_first_request
-def initialize_database():
-    if not os.path.exists(DATABASE):
-        init_db()
-        init_challenges()
 
 def get_location_details(city):
     try:
@@ -194,7 +186,6 @@ def get_location_details(city):
         return None, "Request timed out. Please try again."
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching location data: {str(e)}")
-        logger.error(traceback.format_exc())
         return None, f"Error connecting to weather service: {str(e)}"
 
 def get_location_from_coordinates(lat, lon):
@@ -244,6 +235,11 @@ def get_location_from_coordinates(lat, lon):
 def get_weather_data(lat, lon):
     try:
         logger.debug(f"Attempting to fetch weather data for ({lat}, {lon})")
+        
+        # Validate coordinates
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            raise ValueError("Invalid coordinates provided")
+            
         params = {
             'lat': lat,
             'lon': lon,
@@ -262,22 +258,39 @@ def get_weather_data(lat, lon):
         )
         
         if response.status_code == 401:
-            logger.error(f"API Key error. Status: {response.status_code}, Response: {response.text}")
-            return None, "Invalid API key. Please check your configuration."
-            
+            logger.error("Invalid API key")
+            raise Exception("Weather service authentication failed")
+        
         response.raise_for_status()
-        return response.json(), None
+        data = response.json()
+        
+        if 'main' not in data or 'weather' not in data:
+            raise ValueError("Invalid weather data received")
+            
+        return data, None
+        
     except requests.exceptions.Timeout:
         logger.error("Timeout while fetching weather data")
-        return None, "Request timed out. Please try again."
+        return None, "Weather service timeout. Please try again."
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching weather data: {str(e)}")
+        return None, "Unable to connect to weather service"
+    except ValueError as e:
+        logger.error(f"Value error: {str(e)}")
+        return None, str(e)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
         logger.error(traceback.format_exc())
-        return None, f"Error connecting to weather service: {str(e)}"
+        return None, "An unexpected error occurred"
 
 def get_air_quality(lat, lon):
     try:
         logger.debug(f"Attempting to fetch air quality data for ({lat}, {lon})")
+        
+        # Validate coordinates
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            raise ValueError("Invalid coordinates provided")
+            
         params = {
             'lat': lat,
             'lon': lon,
@@ -295,38 +308,49 @@ def get_air_quality(lat, lon):
         )
         
         if response.status_code == 401:
-            logger.error(f"API Key error. Status: {response.status_code}, Response: {response.text}")
-            return None, "Invalid API key. Please check your configuration."
+            logger.error("Invalid API key")
+            raise Exception("Air quality service authentication failed")
             
         response.raise_for_status()
         data = response.json()
         
-        if 'list' in data and len(data['list']) > 0:
-            air_data = data['list'][0]
-            aqi = air_data['main']['aqi']
-            components = air_data['components']
+        if 'list' not in data or not data['list']:
+            raise ValueError("Invalid air quality data received")
             
-            aqi_labels = {
-                1: "Good",
-                2: "Fair",
-                3: "Moderate",
-                4: "Poor",
-                5: "Very Poor"
-            }
+        current_data = data['list'][0]
+        if 'main' not in current_data or 'components' not in current_data:
+            raise ValueError("Incomplete air quality data")
             
-            return {
-                'aqi': aqi,
-                'aqi_label': aqi_labels.get(aqi, "Unknown"),
-                'components': components
-            }, None
-        return None, "No air quality data available for this location."
+        aqi = current_data['main']['aqi']
+        components = current_data['components']
+        
+        aqi_labels = {
+            1: "Good",
+            2: "Fair",
+            3: "Moderate",
+            4: "Poor",
+            5: "Very Poor"
+        }
+        
+        return {
+            'aqi': aqi,
+            'aqi_label': aqi_labels.get(aqi, "Unknown"),
+            'components': components
+        }, None
+        
     except requests.exceptions.Timeout:
         logger.error("Timeout while fetching air quality data")
-        return None, "Request timed out. Please try again."
+        return None, "Air quality service timeout. Please try again."
     except requests.exceptions.RequestException as e:
         logger.error(f"Error fetching air quality data: {str(e)}")
+        return None, "Unable to connect to air quality service"
+    except ValueError as e:
+        logger.error(f"Value error: {str(e)}")
+        return None, str(e)
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
         logger.error(traceback.format_exc())
-        return None, f"Error connecting to weather service: {str(e)}"
+        return None, "An unexpected error occurred"
 
 @app.route('/')
 def home():
@@ -387,22 +411,31 @@ def get_weather():
 
 @app.route('/locations/save', methods=['POST'])
 def save_location():
+    """Save a location to the database"""
+    db = None
     try:
         logger.debug("Attempting to save location")
         data = request.get_json()
         logger.debug(f"Received location data: {data}")
         
-        name = data.get('name')
-        lat = data.get('lat')
-        lon = data.get('lon')
-        country = data.get('country')
-        state = data.get('state')
-        is_current = data.get('is_current', False)
+        # Validate required fields
+        name = str(data.get('name', '')).strip()
+        try:
+            lat = float(data.get('lat', 0))
+            lon = float(data.get('lon', 0))
+        except (TypeError, ValueError) as e:
+            logger.error(f"Invalid coordinates: {e}")
+            return jsonify({'error': 'Invalid coordinates'}), 400
+            
+        country = str(data.get('country', '')).strip()
+        state = str(data.get('state', '')).strip()
+        is_current = bool(data.get('is_current', False))
         
-        if not all([name, lat, lon]):
+        if not name or not lat or not lon:
             logger.error("Missing required fields")
             return jsonify({'error': 'Missing required fields'}), 400
-        
+            
+        # Get database connection
         db = get_db()
         cursor = db.cursor()
         
@@ -426,6 +459,7 @@ def save_location():
                 WHERE id = ?
             ''', (country, state, is_current, existing['id']))
             msg = 'Location updated successfully'
+            logger.info(f"Updated location {name} ({lat}, {lon})")
         else:
             # Insert new location
             cursor.execute('''
@@ -433,16 +467,22 @@ def save_location():
                 VALUES (?, ?, ?, ?, ?, ?)
             ''', (name, lat, lon, country, state, is_current))
             msg = 'Location saved successfully'
+            logger.info(f"Saved new location {name} ({lat}, {lon})")
         
         db.commit()
-        logger.debug(msg)
-        
         return jsonify({'message': msg}), 201
+        
+    except sqlite3.Error as e:
+        logger.error(f"Database error: {str(e)}")
+        if db:
+            db.rollback()
+        return jsonify({'error': 'Database error occurred'}), 500
         
     except Exception as e:
         logger.error(f"Error saving location: {str(e)}")
         logger.error(traceback.format_exc())
-        db.rollback()
+        if db:
+            db.rollback()
         return jsonify({'error': 'Failed to save location'}), 500
 
 @app.route('/locations/saved', methods=['GET'])
@@ -466,24 +506,41 @@ def get_saved_locations():
 
 @app.route('/locations/delete/<int:location_id>', methods=['DELETE'])
 def delete_location(location_id):
+    """Delete a saved location"""
+    db = None
     try:
-        logger.debug(f"Attempting to delete location with ID {location_id}")
+        logger.debug(f"Attempting to delete location {location_id}")
+        
+        # Get database connection
         db = get_db()
         cursor = db.cursor()
         
+        # Check if location exists
+        cursor.execute('SELECT id FROM saved_locations WHERE id = ?', (location_id,))
+        location = cursor.fetchone()
+        
+        if not location:
+            logger.error(f"Location {location_id} not found")
+            return jsonify({'error': 'Location not found'}), 404
+            
+        # Delete the location
         cursor.execute('DELETE FROM saved_locations WHERE id = ?', (location_id,))
         db.commit()
         
-        if cursor.rowcount == 0:
-            logger.error("Location not found")
-            return jsonify({'error': 'Location not found'}), 404
-            
-        logger.debug("Location deleted successfully")
+        logger.info(f"Deleted location {location_id}")
         return jsonify({'message': 'Location deleted successfully'}), 200
+        
+    except sqlite3.Error as e:
+        logger.error(f"Database error while deleting location: {str(e)}")
+        if db:
+            db.rollback()
+        return jsonify({'error': 'Database error occurred'}), 500
         
     except Exception as e:
         logger.error(f"Error deleting location: {str(e)}")
         logger.error(traceback.format_exc())
+        if db:
+            db.rollback()
         return jsonify({'error': 'Failed to delete location'}), 500
 
 @app.route('/challenges')
@@ -563,6 +620,104 @@ def update_progress():
             'status': 'error',
             'message': 'Failed to update progress'
         }), 500
+
+def init_challenges():
+    db = get_db()
+    challenges = [
+        {
+            'title': 'Weather Novice',
+            'description': 'Get started with basic weather tracking',
+            'difficulty': 'Easy',
+            'category': 'Basics',
+            'points': 100,
+            'requirements': 'Complete first weather search',
+            'track': 'Getting Started'
+        },
+        {
+            'title': 'City Explorer',
+            'description': 'Search weather in 3 different cities',
+            'difficulty': 'Easy',
+            'category': 'Search',
+            'points': 200,
+            'requirements': '3 unique cities',
+            'track': 'Getting Started'
+        },
+        {
+            'title': 'Weather Patterns',
+            'description': 'Find cities with 3 different weather conditions',
+            'difficulty': 'Medium',
+            'category': 'Weather',
+            'points': 300,
+            'requirements': '3 unique conditions',
+            'track': 'Weather Expert'
+        },
+        {
+            'title': 'Global Navigator',
+            'description': 'Check weather in 3 different continents',
+            'difficulty': 'Medium',
+            'category': 'Geography',
+            'points': 400,
+            'requirements': '3 continents',
+            'track': 'Weather Expert'
+        },
+        {
+            'title': 'Weather Master',
+            'description': 'Complete all challenges in the Weather Expert track',
+            'difficulty': 'Hard',
+            'category': 'Achievement',
+            'points': 500,
+            'requirements': 'All previous challenges',
+            'track': 'Weather Expert'
+        }
+    ]
+    
+    for challenge in challenges:
+        db.execute('''
+            INSERT OR IGNORE INTO weather_challenges 
+            (title, description, difficulty, category, points, requirements, track)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            challenge['title'],
+            challenge['description'],
+            challenge['difficulty'],
+            challenge['category'],
+            challenge['points'],
+            challenge['requirements'],
+            challenge['track']
+        ))
+    db.commit()
+
+# Add temporary data export endpoint
+@app.route('/export-data', methods=['GET'])
+def export_data():
+    """Temporary endpoint to export data"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # Get saved locations
+        cursor.execute('SELECT * FROM saved_locations')
+        locations = cursor.fetchall()
+        
+        # Get weather challenges
+        cursor.execute('SELECT * FROM weather_challenges')
+        challenges = cursor.fetchall()
+        
+        # Get user progress
+        cursor.execute('SELECT * FROM user_progress')
+        progress = cursor.fetchall()
+        
+        data = {
+            'saved_locations': locations,
+            'weather_challenges': challenges,
+            'user_progress': progress,
+            'export_date': datetime.now().isoformat()
+        }
+        
+        return jsonify(data)
+    except Exception as e:
+        logger.error(f"Error exporting data: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
