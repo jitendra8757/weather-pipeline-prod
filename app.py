@@ -775,5 +775,72 @@ def init_db_endpoint():
         logger.error(f"Error initializing database: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+# Add data recovery endpoints
+@app.route('/recover/locations')
+def recover_locations():
+    """Get all saved locations"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # Create table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                country TEXT,
+                state TEXT,
+                is_current BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Get all locations
+        cursor.execute('SELECT * FROM saved_locations')
+        locations = cursor.fetchall()
+        
+        return jsonify({
+            'locations': locations,
+            'count': len(locations),
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Error recovering locations: {str(e)}")
+        return jsonify({
+            'error': str(e),
+            'locations': [],
+            'count': 0,
+            'timestamp': datetime.now().isoformat()
+        })
+
+@app.route('/recover/init', methods=['POST'])
+def recover_init():
+    """Initialize the database with tables"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # Create tables
+        cursor.executescript('''
+            CREATE TABLE IF NOT EXISTS saved_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                country TEXT,
+                state TEXT,
+                is_current BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        ''')
+        
+        db.commit()
+        return jsonify({'message': 'Database initialized', 'status': 'success'})
+    except Exception as e:
+        logger.error(f"Error initializing database: {str(e)}")
+        return jsonify({'error': str(e), 'status': 'error'}), 500
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
