@@ -756,6 +756,31 @@
             from { opacity: 0; transform: translateY(-10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+
+        .message {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            border-radius: 5px;
+            z-index: 1000;
+            font-weight: 500;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .message.success {
+            background-color: rgba(34, 197, 94, 0.9);
+            color: white;
+            opacity: 1;
+        }
+        
+        .message.error {
+            background-color: rgba(239, 68, 68, 0.9);
+            color: white;
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
@@ -768,6 +793,7 @@
                 </div>
                 <div class="logo-text">WeatherNow</div>
             </div>
+            <div id="message" class="message"></div>
             <h1>Weather & Air Quality</h1>
             <div class="search-container">
                 <div class="search-box">
@@ -861,8 +887,13 @@
 
         async function saveLocation(location, isCurrentLocation) {
             try {
+                showLoading();
                 console.log('Saving location:', location);
-                console.log('Is current location:', isCurrentLocation);
+                
+                // Validate location data
+                if (!location || !location.name || !location.lat || !location.lon) {
+                    throw new Error('Invalid location data');
+                }
                 
                 const response = await fetch('/locations/save', {
                     method: 'POST',
@@ -875,7 +906,7 @@
                         lon: location.lon,
                         country: location.country || null,
                         state: location.state || null,
-                        is_current: isCurrentLocation
+                        is_current: isCurrentLocation || false
                     })
                 });
 
@@ -886,10 +917,27 @@
                     throw new Error(data.error || 'Failed to save location');
                 }
 
+                // Show success message
+                const message = document.getElementById('message');
+                message.textContent = data.message || 'Location saved successfully';
+                message.className = 'message success';
+                setTimeout(() => {
+                    message.textContent = '';
+                    message.className = 'message';
+                }, 3000);
+
                 await loadSavedLocations();
             } catch (error) {
                 console.error('Save error:', error);
-                showError(error.message);
+                const message = document.getElementById('message');
+                message.textContent = error.message;
+                message.className = 'message error';
+                setTimeout(() => {
+                    message.textContent = '';
+                    message.className = 'message';
+                }, 3000);
+            } finally {
+                hideLoading();
             }
         }
 

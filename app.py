@@ -14,7 +14,10 @@ load_dotenv()
 API_KEY = 'c3cd0b3e22e4080082a35b80adbe8f1f'
 
 # Database configuration
-DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weather_app.db')
+if 'RENDER' in os.environ:
+    DATABASE = '/data/weather_app.db'
+else:
+    DATABASE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'weather_app.db')
 
 # API endpoints
 GEOCODING_BASE_URL = "http://api.openweathermap.org/geo/1.0/direct"
@@ -43,6 +46,10 @@ def close_db(e=None):
 
 def init_db():
     try:
+        # Create data directory if on Render
+        if 'RENDER' in os.environ:
+            os.makedirs('/data', exist_ok=True)
+            
         logger.debug(f"Initializing database at {DATABASE}")
         with app.app_context():
             db = get_db()
@@ -126,6 +133,13 @@ def init_challenges():
 @app.teardown_appcontext
 def teardown_db(exception):
     close_db()
+
+# Initialize database on app startup
+@app.before_first_request
+def initialize_database():
+    if not os.path.exists(DATABASE):
+        init_db()
+        init_challenges()
 
 def get_location_details(city):
     try:
@@ -397,20 +411,38 @@ def save_location():
             logger.debug("Updating current location flag")
             cursor.execute('UPDATE saved_locations SET is_current = 0 WHERE is_current = 1')
         
-        logger.debug("Inserting new location")
+        # Check if location already exists
         cursor.execute('''
-            INSERT INTO saved_locations (name, lat, lon, country, state, is_current)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (name, lat, lon, country, state, is_current))
+            SELECT id FROM saved_locations 
+            WHERE name = ? AND lat = ? AND lon = ?
+        ''', (name, lat, lon))
+        existing = cursor.fetchone()
+        
+        if existing:
+            # Update existing location
+            cursor.execute('''
+                UPDATE saved_locations 
+                SET country = ?, state = ?, is_current = ?
+                WHERE id = ?
+            ''', (country, state, is_current, existing['id']))
+            msg = 'Location updated successfully'
+        else:
+            # Insert new location
+            cursor.execute('''
+                INSERT INTO saved_locations (name, lat, lon, country, state, is_current)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (name, lat, lon, country, state, is_current))
+            msg = 'Location saved successfully'
         
         db.commit()
-        logger.debug("Location saved successfully")
+        logger.debug(msg)
         
-        return jsonify({'message': 'Location saved successfully'}), 201
+        return jsonify({'message': msg}), 201
         
     except Exception as e:
         logger.error(f"Error saving location: {str(e)}")
         logger.error(traceback.format_exc())
+        db.rollback()
         return jsonify({'error': 'Failed to save location'}), 500
 
 @app.route('/locations/saved', methods=['GET'])
@@ -533,8 +565,4 @@ def update_progress():
         }), 500
 
 if __name__ == '__main__':
-    # Initialize the database
-    if not os.path.exists(DATABASE):
-        init_db()
-        init_challenges()
     app.run(debug=True, host='0.0.0.0', port=5000)
