@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: weather-pipeline-prod
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: OPENWEATHER_API_KEY
+        sync: false
