@@ -842,5 +842,85 @@ def recover_init():
         logger.error(f"Error initializing database: {str(e)}")
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
+@app.route('/show-locations')
+def show_locations():
+    """Display saved locations in a simple HTML page"""
+    try:
+        db = get_db()
+        cursor = db.cursor()
+        
+        # Create table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS saved_locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lat REAL NOT NULL,
+                lon REAL NOT NULL,
+                country TEXT,
+                state TEXT,
+                is_current BOOLEAN DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Get all locations
+        cursor.execute('SELECT * FROM saved_locations')
+        locations = cursor.fetchall()
+        
+        # Create HTML response
+        html = '''
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Saved Locations</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .location { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+                .current { background-color: #e6ffe6; }
+            </style>
+        </head>
+        <body>
+            <h1>Saved Locations</h1>
+            <div id="locations">
+        '''
+        
+        if locations:
+            for loc in locations:
+                html += f'''
+                <div class="location {'current' if loc['is_current'] else ''}">
+                    <h3>{loc['name']}</h3>
+                    <p>Coordinates: {loc['lat']}, {loc['lon']}</p>
+                    <p>Country: {loc['country'] or 'N/A'}</p>
+                    <p>State: {loc['state'] or 'N/A'}</p>
+                    <p>Added: {loc['created_at']}</p>
+                </div>
+                '''
+        else:
+            html += '<p>No saved locations found.</p>'
+        
+        html += '''
+            </div>
+            <script>
+                // Add this data to window for easy access
+                window.locationData = ''' + jsonify(locations).get_data(as_text=True) + ''';
+            </script>
+        </body>
+        </html>
+        '''
+        
+        return html
+    except Exception as e:
+        logger.error(f"Error showing locations: {str(e)}")
+        return f'''
+        <!DOCTYPE html>
+        <html>
+        <head><title>Error</title></head>
+        <body>
+            <h1>Error</h1>
+            <p>Failed to retrieve locations: {str(e)}</p>
+        </body>
+        </html>
+        '''
+
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
